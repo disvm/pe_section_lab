@@ -2,10 +2,10 @@
 
 Tiny Rust lab for poking at Windows PE section headers.
 
-It takes an `.exe`, walks the real PE section table, zlib-compresses raw section bytes in place, blanks section names, and adds READ/WRITE/EXECUTE flags.
+It takes an `.exe`, walks the real PE section table, blanks section names, and adds READ/WRITE/EXECUTE flags while preserving section bytes so the output can still open.
 
 ```powershell
 cargo run -- input.exe output.exe
 ```
 
-Note: the output is for learning and inspection, not a runnable packer. A runnable packed binary would need a loader stub that restores code/data in memory before jumping to the original entrypoint.
+Note: this is for learning PE headers, not for building a packer.

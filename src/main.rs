@@ -1,5 +1,4 @@
-use flate2::{Compression, write::ZlibEncoder};
-use std::{env, fs, io::Write, path::Path};
+use std::{env, fs, path::Path};
 
 const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
@@ -59,42 +58,23 @@ fn transform_pe(input: &Path, output: &Path) -> Result<(), String> {
     let mut touched = 0usize;
 
     for section in sections.iter().filter(|section| section.has_raw_data()) {
-        let raw_start = section.raw_ptr as usize;
-        let raw_size = section.raw_size as usize;
-
-        let raw_end = raw_start
-            .checked_add(raw_size)
+        let raw_end = (section.raw_ptr as usize)
+            .checked_add(section.raw_size as usize)
             .ok_or_else(|| "section raw range overflowed".to_string())?;
         if raw_end > bytes.len() {
             return Err(format!(
-                "section {} points outside the file: raw offset {raw_start:#x}, size {raw_size:#x}",
-                section_name(&section.name)
+                "section {} points outside the file: raw offset {:#x}, size {:#x}",
+                section_name(&section.name),
+                section.raw_ptr,
+                section.raw_size
             ));
         }
 
-        // Tiny PE gobble: squeeze bytes, then chill in the same old section space.
-        let original = bytes[raw_start..raw_end].to_vec();
-        let compressed = zlib_compress(&original)?;
-        if compressed.len() > raw_size {
-            eprintln!(
-                "note: section {} compressed from {} to {} bytes, larger than original; storing anyway with zero padding",
-                section_name(&section.name),
-                raw_size,
-                compressed.len()
-            );
-        }
-
-        bytes[raw_start..raw_end].fill(0);
-        let copy_len = compressed.len().min(raw_size);
-        bytes[raw_start..raw_start + copy_len].copy_from_slice(&compressed[..copy_len]);
-
-        // Permission glow-up for the lab: keep old flags, add RWX.
         let new_characteristics = section.characteristics
             | IMAGE_SCN_MEM_READ
             | IMAGE_SCN_MEM_WRITE
             | IMAGE_SCN_MEM_EXECUTE;
 
-        // Name wipe, no drama. Keep SizeOfRawData unchanged to avoid layout chaos.
         write_section_name_blank(&mut bytes, section.header_offset)?;
         write_u32(&mut bytes, section.header_offset + 36, new_characteristics)?;
 
@@ -105,7 +85,7 @@ fn transform_pe(input: &Path, output: &Path) -> Result<(), String> {
 
     println!("wrote {}", output.display());
     println!("sections touched: {touched}");
-    println!("note: this is a PE section lab file, not a self-extracting runnable packer.");
+    println!("note: section bytes were preserved so the output can still run.");
     Ok(())
 }
 
@@ -170,16 +150,6 @@ impl Section {
     fn has_raw_data(&self) -> bool {
         self.raw_size != 0 && self.raw_ptr != 0
     }
-}
-
-fn zlib_compress(input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(input)
-        .map_err(|err| format!("compression failed: {err}"))?;
-    encoder
-        .finish()
-        .map_err(|err| format!("compression finalization failed: {err}"))
 }
 
 fn section_name(name: &[u8; 8]) -> String {
