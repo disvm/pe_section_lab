@@ -10,7 +10,6 @@ const SECTION_HEADER_SIZE: usize = 40;
 struct PeInfo {
     section_count: usize,
     section_table_offset: usize,
-    file_alignment: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +46,7 @@ fn run() -> Result<(), String> {
 
 fn usage(reason: &str) -> String {
     format!(
-        "{reason}\n\nusage:\n  pe_section_lab <input.exe> <output.exe>\n\nexample:\n  cargo run -- target\\debug\\pe_section_lab.exe packed-demo.exe"
+        "{reason}\n\nusage:\n  pe-section-yapper <input.exe> <output.exe>\n\nexample:\n  cargo run -- target\\debug\\pe_section_lab.exe packed-demo.exe"
     )
 }
 
@@ -59,12 +58,9 @@ fn transform_pe(input: &Path, output: &Path) -> Result<(), String> {
 
     let mut touched = 0usize;
 
-    for section in &sections {
+    for section in sections.iter().filter(|section| section.has_raw_data()) {
         let raw_start = section.raw_ptr as usize;
         let raw_size = section.raw_size as usize;
-        if raw_size == 0 {
-            continue;
-        }
 
         let raw_end = raw_start
             .checked_add(raw_size)
@@ -76,6 +72,7 @@ fn transform_pe(input: &Path, output: &Path) -> Result<(), String> {
             ));
         }
 
+        // Tiny PE gobble: squeeze bytes, then chill in the same old section space.
         let original = bytes[raw_start..raw_end].to_vec();
         let compressed = zlib_compress(&original)?;
         if compressed.len() > raw_size {
@@ -91,17 +88,14 @@ fn transform_pe(input: &Path, output: &Path) -> Result<(), String> {
         let copy_len = compressed.len().min(raw_size);
         bytes[raw_start..raw_start + copy_len].copy_from_slice(&compressed[..copy_len]);
 
+        // Permission glow-up for the lab: keep old flags, add RWX.
         let new_characteristics = section.characteristics
             | IMAGE_SCN_MEM_READ
             | IMAGE_SCN_MEM_WRITE
             | IMAGE_SCN_MEM_EXECUTE;
 
+        // Name wipe, no drama. Keep SizeOfRawData unchanged to avoid layout chaos.
         write_section_name_blank(&mut bytes, section.header_offset)?;
-        write_u32(
-            &mut bytes,
-            section.header_offset + 16,
-            align_up(copy_len as u32, pe.file_alignment),
-        )?;
         write_u32(&mut bytes, section.header_offset + 36, new_characteristics)?;
 
         touched += 1;
@@ -138,13 +132,11 @@ fn parse_pe(bytes: &[u8]) -> Result<PeInfo, String> {
         return Err(format!("unsupported optional header magic: {magic:#x}"));
     }
 
-    let file_alignment = read_u32(bytes, optional_header + 36)?;
     let section_table_offset = optional_header + optional_header_size;
 
     Ok(PeInfo {
         section_count,
         section_table_offset,
-        file_alignment,
     })
 }
 
@@ -174,6 +166,12 @@ fn parse_sections(bytes: &[u8], pe: &PeInfo) -> Result<Vec<Section>, String> {
     Ok(sections)
 }
 
+impl Section {
+    fn has_raw_data(&self) -> bool {
+        self.raw_size != 0 && self.raw_ptr != 0
+    }
+}
+
 fn zlib_compress(input: &[u8]) -> Result<Vec<u8>, String> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder
@@ -196,13 +194,6 @@ fn write_section_name_blank(bytes: &mut [u8], header_offset: usize) -> Result<()
     }
     bytes[header_offset..end].fill(0);
     Ok(())
-}
-
-fn align_up(value: u32, alignment: u32) -> u32 {
-    if alignment == 0 {
-        return value;
-    }
-    value.div_ceil(alignment) * alignment
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
@@ -240,9 +231,17 @@ mod tests {
     }
 
     #[test]
-    fn align_up_uses_file_alignment() {
-        assert_eq!(align_up(0x201, 0x200), 0x400);
-        assert_eq!(align_up(0x400, 0x200), 0x400);
-        assert_eq!(align_up(7, 0), 7);
+    fn section_with_raw_data_needs_size_and_pointer() {
+        let mut section = Section {
+            header_offset: 0,
+            name: *b".text\0\0\0",
+            raw_size: 1,
+            raw_ptr: 1,
+            characteristics: 0,
+        };
+        assert!(section.has_raw_data());
+
+        section.raw_size = 0;
+        assert!(!section.has_raw_data());
     }
 }

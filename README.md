@@ -1,11 +1,11 @@
-# pe_section_lab
+# PE Section Yapper
 
-Mini lab Rust pour comprendre la table des sections d'un executable Windows PE.
+Tiny Rust lab for poking at Windows PE section headers.
 
-Le programme prend un `.exe` en input, parcourt ses sections, compresse les donnees brutes avec zlib, vide les noms de sections et ajoute les flags READ/WRITE/EXECUTE.
+It takes an `.exe`, walks the real PE section table, zlib-compresses raw section bytes in place, blanks section names, and adds READ/WRITE/EXECUTE flags.
 
 ```powershell
 cargo run -- input.exe output.exe
 ```
 
-Note: l'output est fait pour observer les headers et les sections, pas pour produire un vrai executable runnable. Un vrai packer aurait besoin d'un stub qui decompresse en memoire avant de sauter vers l'entrypoint original.
+Note: the output is for learning and inspection, not a runnable packer. A runnable packed binary would need a loader stub that restores code/data in memory before jumping to the original entrypoint.
